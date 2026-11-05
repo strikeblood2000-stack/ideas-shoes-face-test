@@ -1,0 +1,75 @@
+
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>IDEAS SHOES Face Test</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      text-align: center;
+      background: #f4f6f8;
+      padding: 20px;
+    }
+    video {
+      width: 100%;
+      max-width: 400px;
+      border-radius: 12px;
+      background: #222;
+      transform: scaleX(-1);
+    }
+    button {
+      padding: 14px 24px;
+      margin: 12px;
+      font-size: 17px;
+      border: none;
+      border-radius: 8px;
+      background: #1769aa;
+      color: white;
+    }
+    #status { margin: 15px; }
+  </style>
+</head>
+<body>
+  <h2>IDEAS SHOES</h2>
+  <h3>Employee Face Camera Test</h3>
+  <p>第一阶段：测试前置摄像头</p>
+
+  <video id="camera" autoplay playsinline muted></video>
+  <p id="status">请点击按钮开启摄像头</p>
+
+  <button onclick="startCamera()">开启前置摄像头</button>
+  <button onclick="stopCamera()">关闭摄像头</button>
+
+  <script>
+    const video = document.getElementById("camera");
+    const statusText = document.getElementById("status");
+    let stream = null;
+
+    async function startCamera() {
+      try {
+        stopCamera();
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "user" },
+          audio: false
+        });
+        video.srcObject = stream;
+        statusText.textContent = "摄像头已开启，测试成功";
+      } catch (error) {
+        statusText.textContent =
+          "无法开启摄像头：" + error.message;
+      }
+    }
+
+    function stopCamera() {
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+        stream = null;
+      }
+      video.srcObject = null;
+      statusText.textContent = "摄像头已关闭";
+    }
+  </script>
+</body>
+</html>
