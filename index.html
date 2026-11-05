@@ -1,63 +1,245 @@
+
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>IDEAS SHOES - Face Detection V2</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IDEAS SHOES Face Registration V3</title>
 <style>
-body{font-family:Arial,sans-serif;background:#f4f6f8;text-align:center;padding:16px;color:#202b38}
-main{max-width:480px;margin:auto}h2{margin-bottom:4px}.sub{color:#5e6975;font-size:14px}
-.frame{position:relative;width:100%;background:#20242a;border-radius:14px;overflow:hidden;aspect-ratio:3/4}
-video,canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1)}canvas{pointer-events:none}
-button{padding:13px 18px;margin:9px 5px;border:0;border-radius:9px;background:#1769aa;color:white;font-size:16px}button:disabled{opacity:.5}#stop{background:#555}
-#status{background:white;border-radius:10px;padding:13px;line-height:1.5;min-height:40px}.note{font-size:13px;color:#667}
+body{font-family:Arial,sans-serif;background:#f4f6f8;text-align:center;padding:16px;color:#243041}
+main{max-width:450px;margin:auto}
+.frame{position:relative;width:100%;aspect-ratio:3/4;background:#222;border-radius:12px;overflow:hidden}
+video,canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1)}
+canvas{pointer-events:none}
+button{background:#1769aa;color:white;border:0;border-radius:8px;padding:12px;margin:5px;font-size:15px}
+button:disabled{opacity:.4}
+#status{background:white;border-radius:9px;padding:14px;margin:12px 0;line-height:1.6}
+.note{font-size:13px;color:#596574;line-height:1.6}
 </style>
 </head>
-<body><main>
-<h2>IDEAS SHOES</h2><p class="sub">Employee Face Detection — 测试版</p>
-<div class="frame"><video id="video" autoplay muted playsinline></video><canvas id="overlay"></canvas></div>
-<div><button id="start">开启摄像头与人脸检测</button><button id="stop">关闭</button></div>
-<div id="status" role="status" aria-live="polite">点击开启，首次使用需要下载人脸检测模型。</div>
-<p class="note">仅检测是否有人脸，不识别身份、不储存或上传照片。检测结果不能用于正式打卡。</p>
+<body>
+<main>
+<h2>IDEAS SHOES</h2>
+<h3>Employee Face Registration V3</h3>
+<p>一位员工人脸登记与验证测试</p>
+
+<div class="frame">
+<video id="video" autoplay muted playsinline></video>
+<canvas id="overlay"></canvas>
+</div>
+
+<label>
+<input type="checkbox" id="consent">
+我已了解测试目的，并自愿同意在本浏览器保存人脸特征。
+</label>
+
+<div>
+<button id="start">开启前置摄像头</button>
+<button id="register" disabled>登记测试人脸</button>
+<button id="verify" disabled>验证本人</button>
+<button id="stop">关闭摄像头</button>
+</div>
+
+<div id="status">请先勾选同意，再开启摄像头。</div>
+<p id="stored"></p>
+<button id="remove">删除本机登记资料</button>
+
+<p class="note">
+仅供测试。人脸特征保存在本浏览器，不主动上传至 Google Sheets。
+本版本没有活体检测，照片或视频可能冒充真人。
+不得用于正式考勤。
+</p>
 </main>
+
 <script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.15/dist/face-api.js"></script>
 <script>
-const video=document.getElementById('video'),canvas=document.getElementById('overlay'),statusBox=document.getElementById('status');
-const startBtn=document.getElementById('start');let stream=null, running=false, modelReady=false, busy=false;
-function status(s){statusBox.textContent=s}
-async function loadModel(){
- if(modelReady)return;
- if(!window.faceapi)throw Error('人脸检测程序未加载，请检查网络。');
- status('正在下载人脸检测模型，请稍候…');
- await faceapi.nets.tinyFaceDetector.loadFromUri('https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.15/model');
- modelReady=true;
+const $ = id => document.getElementById(id);
+const video = $('video');
+const canvas = $('overlay');
+const KEY = 'ideas_shoes_face_test_v3';
+
+let stream = null;
+let ready = false;
+let busy = false;
+let timer = null;
+
+function statusText(s) {
+  $('status').textContent = s;
 }
-function drawBox(box,w,h){const ctx=canvas.getContext('2d');ctx.strokeStyle='#2de06f';ctx.lineWidth=4;ctx.strokeRect(box.x,box.y,box.width,box.height)}
-async function scan(){
- if(!running||busy)return;busy=true;
- try{
-  if(video.readyState<2)return;
-  const w=video.videoWidth,h=video.videoHeight;if(!w||!h)return;
-  if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h}
-  const ctx=canvas.getContext('2d');ctx.clearRect(0,0,w,h);
-  const faces=await faceapi.detectAllFaces(video,new faceapi.TinyFaceDetectorOptions({inputSize:320,scoreThreshold:0.5}));
-  if(!running)return;
-  if(faces.length===0)status('未检测到人脸，请面向镜头并保持光线充足。');
-  else if(faces.length===1){drawBox(faces[0].box,w,h);status('检测成功：画面中有 1 张人脸。注意：尚未验证身份。')}
-  else status('检测到 '+faces.length+' 张人脸，请确保镜头前只有 1 人。');
- }catch(e){status('检测失败：'+e.message)}finally{busy=false}
+
+function updateButtons() {
+  const saved = localStorage.getItem(KEY);
+  $('register').disabled = !stream || busy;
+  $('verify').disabled = !stream || busy || !saved;
+  $('stored').textContent = saved
+    ? '本浏览器已有测试人脸登记'
+    : '本浏览器尚未登记人脸';
 }
-let timer=null;
-async function start(){
- if(running)return;startBtn.disabled=true;
- try{
-  await loadModel();
-  status('正在请求前置摄像头权限…');
-  stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user'},audio:false});
-  video.srcObject=stream;await video.play();running=true;
-  status('摄像头已开启，正在检测…');
-  timer=setInterval(scan,450);
- }catch(e){status('无法启动：'+e.message);stop()}finally{startBtn.disabled=false}
+
+async function loadModels() {
+  if (ready) return;
+  if (!window.faceapi) {
+    throw Error('人脸程序加载失败，请检查网络');
+  }
+  statusText('正在下载人脸识别模型，请稍候...');
+  const root =
+    'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.15/model';
+
+  await Promise.all([
+    faceapi.nets.tinyFaceDetector.loadFromUri(root),
+    faceapi.nets.faceLandmark68Net.loadFromUri(root),
+    faceapi.nets.faceRecognitionNet.loadFromUri(root)
+  ]);
+  ready = true;
 }
-function stop(){running=false;if(timer){clearInterval(timer);timer=null}if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}video.srcObject=null;canvas.getContext('2d').clearRect(0,0,canvas.width,canvas.height)}
-startBtn.addEventListener('click',start);document.getElementById('stop').addEventListener('click',()=>{stop();status('已关闭摄像头。')});window.addEventListener('pagehide',stop);
-</script></body></html>
+
+async function startCamera() {
+  if (!$('consent').checked) {
+    statusText('请先阅读并勾选同意。');
+    return;
+  }
+  try {
+    await loadModels();
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'user' },
+      audio: false
+    });
+    video.srcObject = stream;
+    await video.play();
+    statusText('摄像头已开启，请正面看镜头。');
+    updateButtons();
+    timer = setInterval(detectFace, 1000);
+  } catch (e) {
+    statusText('启动失败：' + e.message);
+  }
+}
+
+async function detectFace() {
+  if (!stream || busy || video.readyState < 2) return;
+  busy = true;
+  try {
+    const w = video.videoWidth;
+    const h = video.videoHeight;
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, w, h);
+
+    const faces = await faceapi.detectAllFaces(
+      video,
+      new faceapi.TinyFaceDetectorOptions()
+    );
+
+    if (faces.length === 1) {
+      const b = faces[0].box;
+      ctx.strokeStyle = '#2de06f';
+      ctx.lineWidth = 4;
+      ctx.strokeRect(b.x, b.y, b.width, b.height);
+    }
+  } catch (e) {
+    statusText('检测错误：' + e.message);
+  } finally {
+    busy = false;
+    updateButtons();
+  }
+}
+
+async function getFace() {
+  const faces = await faceapi.detectAllFaces(
+    video,
+    new faceapi.TinyFaceDetectorOptions()
+  ).withFaceLandmarks().withFaceDescriptors();
+
+  if (faces.length !== 1) {
+    throw Error('请确保镜头前只有一张清晰的人脸');
+  }
+  return faces[0].descriptor;
+}
+
+async function registerFace() {
+  if (busy) return;
+  busy = true;
+  updateButtons();
+  try {
+    statusText('正在提取人脸特征...');
+    const descriptor = await getFace();
+
+    if (localStorage.getItem(KEY) &&
+        !confirm('确定覆盖原本的测试登记吗？')) {
+      statusText('已取消登记。');
+      return;
+    }
+
+    localStorage.setItem(
+      KEY, JSON.stringify(Array.from(descriptor))
+    );
+    statusText('人脸登记成功！现在可以测试验证本人。');
+  } catch (e) {
+    statusText('登记失败：' + e.message);
+  } finally {
+    busy = false;
+    updateButtons();
+  }
+}
+
+async function verifyFace() {
+  if (busy) return;
+  busy = true;
+  updateButtons();
+  try {
+    statusText('正在比对人脸...');
+    const current = await getFace();
+    const saved = JSON.parse(localStorage.getItem(KEY));
+
+    if (!Array.isArray(saved) || saved.length !== 128) {
+      throw Error('没有有效的登记资料');
+    }
+
+    const distance = faceapi.euclideanDistance(
+      current, new Float32Array(saved)
+    );
+
+    const matched = distance < 0.5;
+    statusText(
+      (matched ? '测试匹配' : '测试不匹配') +
+      '，特征距离：' + distance.toFixed(3) +
+      '。此结果不能证明真人身份。'
+    );
+  } catch (e) {
+    statusText('验证失败：' + e.message);
+  } finally {
+    busy = false;
+    updateButtons();
+  }
+}
+
+function stopCamera() {
+  if (timer) clearInterval(timer);
+  timer = null;
+  if (stream) {
+    stream.getTracks().forEach(t => t.stop());
+    stream = null;
+  }
+  video.srcObject = null;
+  updateButtons();
+}
+
+$('start').onclick = startCamera;
+$('register').onclick = registerFace;
+$('verify').onclick = verifyFace;
+$('stop').onclick = () => {
+  stopCamera();
+  statusText('摄像头已关闭');
+};
+$('remove').onclick = () => {
+  if (confirm('确定删除本机人脸测试资料？')) {
+    localStorage.removeItem(KEY);
+    updateButtons();
+    statusText('测试资料已删除');
+  }
+};
+window.addEventListener('pagehide', stopCamera);
+updateButtons();
+</script>
+</body>
+</html>
